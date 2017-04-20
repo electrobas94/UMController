@@ -8,7 +8,7 @@
 #include <QAudio>
 #include <QAudioOutput>
 #include <QAudioInput>
-
+#include "gsmmodem.h"
 
 namespace Ui {
 class MainWindow;
@@ -40,12 +40,26 @@ private slots:
 
     void on_pushButtonRefresh_clicked();
 
+    void on_pushButtonNetConnect_clicked();
+
+    void on_pushButton_2_clicked();
+
+    void on_pushButton_3_clicked();
+
+    void on_listWidget_clicked(const QModelIndex &index);
+
+    void on_pushButton_4_clicked();
+
+    void on_pushButton_5_clicked();
+
 public slots:
     void readData();
     void getMainInfo();
     void writeAudioData();
 
 private:
+    QString recivData;
+    QString HexToQString( QString str);
     qint16 recordBuf[1000];
     Ui::MainWindow *ui;
     QAudioOutput *audio;
@@ -66,6 +80,8 @@ private:
     void ModemConnect();
 
     void RefreshPortList();
+
+    GSMModem *netModem;
 };
 
 #endif // MAINWINDOW_H
