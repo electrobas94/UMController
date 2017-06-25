@@ -10,12 +10,111 @@
 #include <QStringBuilder>
 #include <QTextEncoder>
 #include <QMessageBox>
+#include <QInputDialog>
+#include <QTableWidgetItem>
+#include <QPlainTextEdit>
+#include <QtXml>
+
+int huawei[2] = {0,0};
+int zte[2]    = {0,0};
+
+int tagFlag = 0;
+QString contactStr = "";
+int column = 0;
+
+void MainWindow::traverseNode(const QDomNode& node)
+{
+   QDomNode domNode = node.firstChild();
+   while(!domNode.isNull()) {
+       if(domNode.isElement()) {
+          QDomElement domElement = domNode.toElement();
+          if(!domElement.isNull()) {
+              if(domElement.tagName() == "contact")
+              {
+                  column = 0;
+                  tagFlag = 1;
+                  contactStr = "";
+                  //qDebug() << "Contact number - " << domElement.attribute("number", "");
+              }
+              else if(domElement.tagName() == "call")
+              {
+                  ui->tableWidgetCallTable->insertRow(ui->tableWidgetCallTable->rowCount());
+                  tagFlag = 2;
+                  column = 0;
+                  //qDebug() << "call number - "<< domElement.attribute("number", "");
+              }
+              else if(domElement.tagName() == "sms")
+              {
+                  ui->tableWidgetSMS->insertRow(ui->tableWidgetSMS->rowCount());
+                  tagFlag = 3;
+                  column = 0;
+              }
+              else
+              {
+                  if(tagFlag == 2)
+                  {
+                      ui->tableWidgetCallTable->setItem(ui->tableWidgetCallTable->rowCount() - 1,
+                                                        column,
+                                                        new QTableWidgetItem( domElement.text()) );
+                      column ++;
+                  }
+                  else if(tagFlag == 1)
+                      {
+                          contactStr += domElement.text();
+                          if(column == 0)
+                              contactStr += " - ";
+                          else
+                              ui->listWidgetKontakt->addItem(contactStr);
+
+                            column ++;
+                      }
+                  else if(tagFlag == 3)
+                  {
+                      ui->tableWidgetSMS->setItem(ui->tableWidgetSMS->rowCount() - 1,
+                                                        column,
+                                                        new QTableWidgetItem( domElement.text()) );
+                      column ++;
+                  }
+                  qDebug() << "TagName: " << domElement.tagName()<< "\tText: " << domElement.text();
+             }
+          }
+       }
+       traverseNode(domNode);
+       domNode = domNode.nextSibling();
+    }
+}
+
+void MainWindow::LoadStorage()
+{
+    QDomDocument domDoc;
+    QFile        file("adressbook.xml");
+
+    if(file.open(QIODevice::ReadOnly))
+    {
+        qDebug()<< "File open";
+        if(domDoc.setContent(&file)) {
+            QDomElement domElement= domDoc.documentElement();
+            //qDebug() <<"Element"<< domElement.text();
+            traverseNode(domElement);
+        }
+        file.close();
+    }
+    else
+        qDebug()<< "File not open";
+}
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+
+    //QTextCodec::setCodecForTr(QTextCodec::codecForName( "utf-8"));
+    QTextCodec::setCodecForLocale(QTextCodec::codecForName( "utf-8"));
+
+    connect(qApp, SIGNAL(aboutToQuit()), SLOT(closeWindow()));
+
+    ui->widgetSms->hide();
 
     // Ставим стандартный текст на форме
     ui->lineEditSimState->setText("Не активна");
@@ -28,6 +127,10 @@ MainWindow::MainWindow(QWidget *parent) :
     // Получаем сиписок и показываем на форме для возможности выбора
     RefreshPortList();
 
+    LoadStorage();
+
+    ui->tabWidget_4->tabBar()->hide();
+    ui->widgetConsol->hide();
 
     // Настраеваем таймер который будет раз в 3 секунды вызывать
     updateModemInfo = new QTimer(this);
@@ -131,7 +234,7 @@ void MainWindow::ModemConnect()
         QObject::connect(&_Modem, &QSerialPort::readyRead, this, &MainWindow::readData );
         qDebug() <<"Modem port is opened";
 
-        ui->lineEditModemName->setText(ui->comboBoxModemPort->currentText().split(":")[1]);
+        ui->lineEditModemName->setText(ui->comboBoxModemPort->currentText().split(":")[1].split("-")[0]);
     }
     else
     {
@@ -194,10 +297,12 @@ void MainWindow::readData()
     foreach ( QString str, list)
     {
         // если ответ на уровень сигнала прищел
-       if(str.indexOf("+CSQ") >=0)
+       if(str.indexOf("CSQ:") >=0)
        {
-            QString tmp = str.split(": ")[1];
-            tmp = tmp.trimmed();
+            QStringList tmpL = str.split(":");
+            if(tmpL.length() < 2)
+                break;
+            QString tmp = tmpL[1].trimmed();
             if(tmp != "")
             {
                 QLocale german(QLocale::German);
@@ -215,19 +320,39 @@ void MainWindow::readData()
        {
            try
            {
-               QString tmp = str.split(":")[1].split(",")[2];
+               QStringList tmpL = str.split(":");
+               if(tmpL.length() < 2)
+                   break;
+
+               QString tmp = tmpL[1].split(",")[2];
                tmp = tmp.trimmed();
                ui->lineEditNetState->setText(tmp);
            }
            catch(...)
            {}
            // на запрос пин кода
-       }else if(str.indexOf("+CPIN") >=0)
+       }else if(str.indexOf("CPIN:") >=0)
        {
-            QString tmp = str.split(": ")[1];
+           QStringList tmpL = str.split(":");
+           if(tmpL.length() < 2)
+               break;
+
+            QString tmp = tmpL[1];
             tmp = tmp.trimmed();
             if(tmp == "READY")
                 tmp = "Подключена";
+          else if(tmp == "SIM PIN")
+            {
+            bool bOk;
+            QString str = QInputDialog::getText( 0,
+            "PIN",
+            "Введите пин код:",
+            QLineEdit::Normal,
+            "1111",
+            &bOk
+            );
+            SendAtCommand("AT+CPIN=\""+ str+"\"");
+            }
             ui->lineEditSimState->setText( tmp );
        }
        // телофонная книга
@@ -265,6 +390,13 @@ void MainWindow::readData()
 
 void MainWindow::on_pushButton_clicked()
 {
+    ui->lineEditPhoneNumber_2->setText(ui->lineEditPhoneNumber->text());
+    ui->widgetSms->setParent(nullptr);
+    ui->widgetSms->show();
+    //auto asd = new QPlainTextEdit();
+    //asd->show();
+
+
     /*
         sourceFile.setFileName("test.raw");
         sourceFile.open(QIODevice::ReadOnly);
@@ -315,6 +447,38 @@ void MainWindow::handleStateChanged(QAudio::State newState)
     }
 }
 
+QString ClearPhoneMask( QString number)
+{
+    auto list = number.split("-");
+
+    QString ss = "";
+
+    foreach (QString str, list) {
+        ss += str;
+    }
+
+    return ss;
+}
+
+// Ищет имя по номеру в телефонной книге
+QString MainWindow::FindNameByNumber( QString number )
+{
+    for( int i = 0; i < ui->listWidget->count(); i++)
+    {
+        if( ui->listWidget->item(i)->text().indexOf(number) > 0 ||
+                ui->listWidget->item(i)->text().indexOf(ClearPhoneMask(number))>0)
+            return ui->listWidget->item(i)->text().split("-")[0];
+    }
+    for( int i = 0; i < ui->listWidgetKontakt->count(); i++)
+    {
+        if( ui->listWidgetKontakt->item(i)->text().indexOf(number) > 0 ||
+                ui->listWidgetKontakt->item(i)->text().indexOf(ClearPhoneMask(number))>0)
+            return ui->listWidgetKontakt->item(i)->text().split("-")[0];
+    }
+
+    return " ";
+}
+
 // Функция начала вызова
 void MainWindow::on_pushButtonCall_clicked()
 {
@@ -359,6 +523,13 @@ void MainWindow::on_pushButtonCall_clicked()
                 //connect(audio, SIGNAL(stateChanged(QAudio::State)), this, SLOT(handleStateChanged(QAudio::State)));
                 audio->start(&_VoiceChanal);
             }
+
+            ui->tableWidgetCallTable->insertRow(0);
+            ui->tableWidgetCallTable->setItem(0, 0,  new QTableWidgetItem(ui->lineEditPhoneNumber->text() ) );
+            ui->tableWidgetCallTable->setItem( 0, 1, new QTableWidgetItem(QTime::currentTime().toString() ) );
+            ui->tableWidgetCallTable->setItem( 0, 2, new QTableWidgetItem( QDate::currentDate().toString()) );
+            ui->tableWidgetCallTable->setItem( 0, 3, new QTableWidgetItem("Исходящий"));
+            ui->tableWidgetCallTable->setItem( 0, 4, new QTableWidgetItem(FindNameByNumber(ui->lineEditPhoneNumber->text())));
         }
     }
     else
@@ -442,13 +613,13 @@ void MainWindow::on_pushButtonConnect_clicked()
     // Спрашиваеимя производителя
     recivData ="";
     SendAtCommand("AT+CGMI", 40);
-    if(recivData="")
+    if(recivData == "")
     {
         QMessageBox *a = new QMessageBox();
         a->setText("Ошибка открытия порта. \nВозможно вы выбрание не тот порт в качестве модема");
         a->show();
         _Modem.close();
-        return 0;
+        return;
     }
     ui->lineEditVendor->setText(recivData);
 
@@ -479,7 +650,7 @@ void MainWindow::on_pushButtonConnect_clicked()
     ui->lineEditIMEI->setText(recivData);
 
     // получаем номера записанные с сим карты
-    // get number book
+
     SendAtCommand("AT^CPBR=1,50", 50);
     SendAtCommand("AT^CPBR=51,100", 50);
     SendAtCommand("AT^CPBR=101,150", 50);
@@ -532,6 +703,51 @@ void MainWindow::RefreshPortList()
         ui->comboBoxModemPort->addItem(portInfo.portName() + ": "+ portInfo.description() + " :(" + portInfo.manufacturer() + ")");
         ui->comboBoxDataPort->addItem(portInfo.portName() + ": "+ portInfo.description() + " :(" + portInfo.manufacturer() + ")");
         //ui->comboBoxIpData->addItem(portInfo.portName() + ": "+ portInfo.description() + " :(" + portInfo.manufacturer() + ")");
+    }
+
+    // Main modem vendor
+    bool huawei_f = true;
+    bool zte_f = true;
+
+    for( int i = 0; i < ui->comboBoxModemPort->count(); i++ )
+    {
+        QString tmp = ui->comboBoxDataPort->itemText( i );
+
+        tmp = tmp.toLower();
+
+        if( tmp.indexOf("huawei") > -1 && huawei_f ){
+            huawei_f = false;
+            ui->comboBoxModemList->addItem("Huawei modem");
+        }
+
+        if( tmp.indexOf("zte") > -1 && zte_f ){
+            zte_f = false;
+            ui->comboBoxModemList->addItem("ZTE modem");
+        }
+
+        if( tmp.indexOf("huawei") > -1 && !huawei_f )
+        {
+            if( tmp.indexOf("application interface") > -1 )
+            {
+                huawei[0] = i;
+            }
+            if( tmp.indexOf("pc ui") > -1 )
+            {
+                huawei[1] = i;
+            }
+            continue;
+        }
+        else if( tmp.indexOf("zte") > -1 && !zte_f )
+        {
+            if( tmp.indexOf("diagnostic") > -1 )
+            {
+                zte[0] = i;
+            }
+            if( tmp.indexOf("ui") > -1 )
+            {
+                zte[1] = i;
+            }
+        }
     }
 }
 
@@ -643,6 +859,17 @@ void MainWindow::on_pushButton_4_clicked()
     SendAtCommand("AT+CMGS=" + QString::number(num.length()/2-1), 500);
     SendAtCommand( num, 500);
 
+    ui->tableWidgetSMS->insertRow(0);
+    ui->tableWidgetSMS->setItem(0, 0,  new QTableWidgetItem(ui->lineEditPhoneNumber_2->text() ) );
+    ui->tableWidgetSMS->setItem( 0, 1, new QTableWidgetItem(QTime::currentTime().toString() ) );
+    ui->tableWidgetSMS->setItem( 0, 2, new QTableWidgetItem( QDate::currentDate().toString()) );
+    ui->tableWidgetSMS->setItem( 0, 3, new QTableWidgetItem("Исходящее"));
+    ui->tableWidgetSMS->setItem( 0, 4, new QTableWidgetItem(FindNameByNumber(ui->lineEditPhoneNumber->text() )));
+    ui->tableWidgetSMS->setItem( 0, 5, new QTableWidgetItem( ui->plainTextEditSMS->toPlainText() ));
+
+     ui->plainTextEditSMS->clear();
+     ui->widgetSms->hide();
+
     QMessageBox *d = new QMessageBox();
 
     d->setText("Сообщение отправлено");
@@ -675,4 +902,357 @@ void MainWindow::on_pushButton_5_clicked()
     num+="0008FF" + len + "00";
 
     ui->plainTextEditSMS->appendPlainText(num);
+}
+
+void MainWindow::on_pushButtonAutoConnect_clicked()
+{
+    if( ui->comboBoxModemList->currentText().toLower().indexOf("huawei") > -1 )
+    {
+        ui->comboBoxModemPort->setCurrentIndex(huawei[1]);
+        ui->comboBoxDataPort->setCurrentIndex(huawei[0]);
+
+       on_pushButtonConnect_clicked();
+    }
+}
+
+bool proMode = true;
+
+void MainWindow::on_pushButtonProOn_clicked()
+{
+    if( proMode)
+    {
+        //ui->tabWidget->widget(2)->hide();
+        ui->tabWidget_4->tabBar()->show();
+        ui->widgetConsol->show();
+        proMode = false;
+    }
+    else
+    {
+        //ui->tabWidget->widget(2)->show();
+        ui->tabWidget_4->tabBar()->hide();
+        ui->widgetConsol->hide();
+        proMode = true;
+    }
+}
+
+void MainWindow::on_pushButtonAutoDisconnect_clicked()
+{
+    on_pushButtonModemDeconect_clicked();
+}
+
+void MainWindow::on_pushButton_d1_clicked()
+{
+    ui->lineEditPhoneNumber->insert("1");
+    //ui->lineEditPhoneNumber->setText( ui->lineEditPhoneNumber->text() + "1" );
+}
+
+void MainWindow::on_pushButton_d2_clicked()
+{
+    ui->lineEditPhoneNumber->insert("2");
+}
+
+void MainWindow::on_pushButton_d3_clicked()
+{
+    ui->lineEditPhoneNumber->insert("3");
+}
+
+void MainWindow::on_pushButton_d4_clicked()
+{
+    ui->lineEditPhoneNumber->insert("4");
+}
+
+void MainWindow::on_pushButton_d5_clicked()
+{
+    ui->lineEditPhoneNumber->insert("5");
+}
+
+void MainWindow::on_pushButton_d6_clicked()
+{
+    ui->lineEditPhoneNumber->insert("6");
+}
+
+void MainWindow::on_pushButton_d7_clicked()
+{
+    ui->lineEditPhoneNumber->insert("7");
+}
+
+void MainWindow::on_pushButton_d8_clicked()
+{
+    ui->lineEditPhoneNumber->insert("8");
+}
+
+void MainWindow::on_pushButton_d9_clicked()
+{
+    ui->lineEditPhoneNumber->insert("9");
+}
+
+void MainWindow::on_pushButton_d0_clicked()
+{
+    ui->lineEditPhoneNumber->insert("0");
+}
+
+void MainWindow::on_pushButton_dplus_clicked()
+{
+    ui->lineEditPhoneNumber->insert("+");
+}
+
+void MainWindow::on_pushButton_ddel_clicked()
+{
+    ui->lineEditPhoneNumber->clear();
+}
+
+void MainWindow::on_pushButtonSaveNumber_clicked()
+{
+    bool dialogResult;
+     QInputDialog *renameDialog = new QInputDialog();
+     //renameDialog->setTextValue("Test");
+     QString result = renameDialog->getText(0, "Создание нового контакта", "Введите Имя:", QLineEdit::Normal,
+                                            "", &dialogResult);
+
+     if(result.length() > 0 && dialogResult)
+        ui->listWidgetKontakt->addItem(result +" - " +ui->lineEditPhoneNumber->text());
+     //if(result.length() > 0 && dialogResult)
+         //setText(result);
+}
+
+void MainWindow::on_listWidgetKontakt_clicked(const QModelIndex &index)
+{
+    QString numer = ui->listWidgetKontakt->currentItem()->text().split(" - ")[1];
+
+    //if(numer.length() == 7 )
+       // numer = "+37533" + numer;
+    ui->lineEditPhoneNumber->setText( numer );
+}
+
+void MainWindow::on_tableWidgetCallTable_cellClicked(int row, int column)
+{
+    ui->lineEditPhoneNumber->setText( ui->tableWidgetCallTable->item(row, 0)->text() );
+}
+
+void MainWindow::on_MainWindow_destroyed()
+{
+    //qDebug()<<"Window was die";
+}
+
+void MainWindow::on_MainWindow_destroyed(QObject *arg1)
+{
+    //qDebug()<<"Window was die";
+}
+
+void MainWindow::on_centralWidget_destroyed()
+{
+    //qDebug()<<"Window was die";
+}
+
+QDomElement makeElement( QDomDocument& domDoc, const QString& strName, const QString& strAttr = QString::null, const QString& strText = QString::null)
+{
+    QDomElement domElement = domDoc.createElement(strName);
+
+    if (!strAttr.isEmpty()) {
+        QDomAttr domAttr = domDoc.createAttribute("number");
+        domAttr.setValue(strAttr);
+        domElement.setAttributeNode(domAttr);
+    }
+
+    if (!strText.isEmpty()) {
+        QDomText domText = domDoc.createTextNode(strText);
+        domElement.appendChild(domText);
+    }
+    return domElement;
+}
+
+QDomElement contact(      QDomDocument& domDoc, const QString&      strName, const QString&      strPhone)
+{
+    static int nNumber = 1;
+
+    QDomElement domElement = makeElement(domDoc,
+                                         "contact",
+                                         QString().setNum(nNumber)
+                                        );
+    domElement.appendChild(makeElement(domDoc, "name", "", strName));
+    domElement.appendChild(makeElement(domDoc, "phone", "", strPhone));
+
+    nNumber++;
+
+    return domElement;
+}
+
+QDomElement call( QDomDocument& domDoc, const QString& strPhone,
+                  const QString& strTime,
+                  const QString& strDate,
+                  const QString& strType,
+                  const QString& strName)
+{
+    static int nNumber = 1;
+
+    QDomElement domElement = makeElement(domDoc, "call",
+                                         QString().setNum(nNumber)
+                                        );
+    domElement.appendChild(makeElement(domDoc, "phone", "", strPhone));
+    domElement.appendChild(makeElement(domDoc, "time", "",  strTime));
+    domElement.appendChild(makeElement(domDoc, "date", "",  strDate));
+    domElement.appendChild(makeElement(domDoc, "type", "",  strType));
+    domElement.appendChild(makeElement(domDoc, "name", "",  strName));
+
+    nNumber++;
+
+    return domElement;
+}
+
+QDomElement sms( QDomDocument& domDoc, const QString& strPhone,
+                  const QString& strTime,
+                  const QString& strDate,
+                  const QString& strType,
+                  const QString& strName,
+                  const QString& strText)
+{
+    static int nNumber = 1;
+
+    QDomElement domElement = makeElement(domDoc, "sms",
+                                         QString().setNum(nNumber)
+                                        );
+    domElement.appendChild(makeElement(domDoc, "phone", "", strPhone));
+    domElement.appendChild(makeElement(domDoc, "time", "",  strTime));
+    domElement.appendChild(makeElement(domDoc, "date", "",  strDate));
+    domElement.appendChild(makeElement(domDoc, "type", "",  strType));
+    domElement.appendChild(makeElement(domDoc, "name", "",  strName));
+    domElement.appendChild(makeElement(domDoc, "text", "",  strText));
+
+    nNumber++;
+
+    return domElement;
+}
+
+void MainWindow::closeWindow()
+{
+    if(ui->listWidgetKontakt->count() == 0 && ui->tableWidgetCallTable->rowCount() == 0)
+        return;
+
+    qDebug()<<"Window is dying";
+
+    QDomDocument doc("addressbook");
+
+    QDomElement  domElement = doc.createElement("adressbook");
+    doc.appendChild(doc.createProcessingInstruction("xml", "version=\"1.0\" encoding=\"utf-8\""));
+    doc.appendChild(domElement);
+
+
+    for(int i = 0; i< ui->listWidgetKontakt->count(); i++)
+    {
+        QDomElement contact1 =
+            contact(doc, ui->listWidgetKontakt->item(i)->text().split(" - ")[0], ui->listWidgetKontakt->item(i)->text().split(" - ")[1]);
+
+        domElement.appendChild(contact1);
+    }
+
+    //QDomElement  domElement2 = doc.createElement("calls");
+    //domElement.appendChild(domElement2);
+
+    for(int i = 0; i < ui->tableWidgetCallTable->rowCount(); i++)
+    {
+        QDomElement call1 =
+            call(doc, ui->tableWidgetCallTable->item(i, 0) != nullptr ?ui->tableWidgetCallTable->item(i, 0)->text():"",//number
+                      ui->tableWidgetCallTable->item(i, 1) != nullptr ?ui->tableWidgetCallTable->item(i, 1)->text():"",//time
+                      ui->tableWidgetCallTable->item(i, 2) != nullptr ?ui->tableWidgetCallTable->item(i, 2)->text():"",//date
+                      ui->tableWidgetCallTable->item(i, 3) != nullptr ?ui->tableWidgetCallTable->item(i, 3)->text():"",//type
+                      ui->tableWidgetCallTable->item(i, 4) != nullptr ?ui->tableWidgetCallTable->item(i, 4)->text():"");//name
+
+        domElement.appendChild(call1);
+    }
+
+    for(int i = 0; i < ui->tableWidgetSMS->rowCount(); i++)
+    {
+        QDomElement sms1 =
+            sms(doc, ui->tableWidgetSMS->item(i, 0) != nullptr ?ui->tableWidgetSMS->item(i, 0)->text():"",//number
+                      ui->tableWidgetSMS->item(i, 1) != nullptr ?ui->tableWidgetSMS->item(i, 1)->text():"",//time
+                      ui->tableWidgetSMS->item(i, 2) != nullptr ?ui->tableWidgetSMS->item(i, 2)->text():"",//date
+                      ui->tableWidgetSMS->item(i, 3) != nullptr ?ui->tableWidgetSMS->item(i, 3)->text():"",//type
+                      ui->tableWidgetSMS->item(i, 4) != nullptr ?ui->tableWidgetSMS->item(i, 4)->text():"",//name
+                      ui->tableWidgetSMS->item(i, 5) != nullptr ?ui->tableWidgetSMS->item(i, 5)->text():"");//text
+
+        domElement.appendChild(sms1);
+    }
+
+
+    QFile file("adressbook.xml");
+    if(file.open(QIODevice::WriteOnly)) {
+        auto stream = new QTextStream(&file);
+        stream->setAutoDetectUnicode(true);
+        *stream << doc.toString();
+        file.close();
+    }
+
+    qDebug()<<"Window was die";
+}
+
+void MainWindow::on_tabWidget_tabBarClicked(int index)
+{
+    on_pushButton_ddel_clicked();
+}
+
+void MainWindow::on_pushButtonStuleSet_clicked()
+{
+    QMessageBox *d = new QMessageBox();
+
+    d->setText("Сообщение отправлено");
+    d->show();
+
+    QFile aa("style.css");
+    aa.open(QIODevice::ReadOnly);
+
+    QString style = aa.readAll();
+    qApp->setStyleSheet(style);
+    aa.close();
+}
+
+void MainWindow::on_tabWidget_3_tabBarClicked(int index)
+{
+    if( index == 3 )
+    {
+        ui->tableWidgetCallTable_4->setRowCount(0);
+        for(int i = 0; i < ui->tableWidgetCallTable->rowCount(); i++)
+        {
+            if(ui->tableWidgetCallTable->item(i, 3)->text() == "Исходящий")
+            {
+            ui->tableWidgetCallTable_4->insertRow(ui->tableWidgetCallTable_4->rowCount());
+            ui->tableWidgetCallTable_4->setItem(ui->tableWidgetCallTable_4->rowCount() - 1, 0, new QTableWidgetItem( ui->tableWidgetCallTable->item(i, 0)->text()));
+            ui->tableWidgetCallTable_4->setItem(ui->tableWidgetCallTable_4->rowCount() - 1, 1, new QTableWidgetItem( ui->tableWidgetCallTable->item(i, 1)->text()));
+            ui->tableWidgetCallTable_4->setItem(ui->tableWidgetCallTable_4->rowCount() - 1, 2, new QTableWidgetItem( ui->tableWidgetCallTable->item(i, 2)->text()));
+            ui->tableWidgetCallTable_4->setItem(ui->tableWidgetCallTable_4->rowCount() - 1, 3, new QTableWidgetItem( ui->tableWidgetCallTable->item(i, 3)->text()));
+            ui->tableWidgetCallTable_4->setItem(ui->tableWidgetCallTable_4->rowCount() - 1, 4, new QTableWidgetItem( ui->tableWidgetCallTable->item(i, 4)->text()));
+            }
+        }
+    }
+}
+
+void MainWindow::on_tabWidget_3_currentChanged(int index)
+{
+
+}
+
+void MainWindow::on_tabWidget_5_tabBarClicked(int index)
+{
+    if( index == 3 )
+    {
+        ui->tableWidgetSMS_4->setRowCount(0);
+        for(int i = 0; i < ui->tableWidgetSMS->rowCount(); i++)
+        {
+            if(ui->tableWidgetSMS->item(i, 3)->text() == "Исходящее")
+            {
+            ui->tableWidgetSMS_4->insertRow(ui->tableWidgetSMS_4->rowCount());
+            ui->tableWidgetSMS_4->setItem(ui->tableWidgetSMS_4->rowCount() - 1, 0, new QTableWidgetItem( ui->tableWidgetSMS->item(i, 0)->text()));
+            ui->tableWidgetSMS_4->setItem(ui->tableWidgetSMS_4->rowCount() - 1, 1, new QTableWidgetItem( ui->tableWidgetSMS->item(i, 1)->text()));
+            ui->tableWidgetSMS_4->setItem(ui->tableWidgetSMS_4->rowCount() - 1, 2, new QTableWidgetItem( ui->tableWidgetSMS->item(i, 2)->text()));
+            ui->tableWidgetSMS_4->setItem(ui->tableWidgetSMS_4->rowCount() - 1, 3, new QTableWidgetItem( ui->tableWidgetSMS->item(i, 3)->text()));
+            ui->tableWidgetSMS_4->setItem(ui->tableWidgetSMS_4->rowCount() - 1, 4, new QTableWidgetItem( ui->tableWidgetSMS->item(i, 4)->text()));
+            ui->tableWidgetSMS_4->setItem(ui->tableWidgetSMS_4->rowCount() - 1, 5, new QTableWidgetItem( ui->tableWidgetSMS->item(i, 5)->text()));
+            }
+        }
+    }
+}
+
+void MainWindow::on_lineEditConsoleCommand_returnPressed()
+{
+    on_pushButtonSendCommand_clicked();
+    ui->lineEditConsoleCommand->clear();
 }

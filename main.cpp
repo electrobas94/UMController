@@ -12,6 +12,8 @@ int main(int argc, char *argv[])
     QString style = aa.readAll();
     a.setStyleSheet(style);
 
+    aa.close();
+
     MainWindow w;
     w.show();
 

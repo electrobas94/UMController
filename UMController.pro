@@ -5,6 +5,7 @@
 #-------------------------------------------------
 
 QT       += core gui
+QT += xml
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += serialport multimedia widgets network
 
@@ -28,14 +29,17 @@ SOURCES += main.cpp\
     advancedserialport.cpp \
     gsmmodem.cpp \
     dictionarycommandat.cpp \
-    modem3g.cpp
+    modem3g.cpp \
+    dialogsms.cpp
 
 HEADERS  += mainwindow.h \
     advancedserialport.h \
     gsmmodem.h \
     dictionarycommandat.h \
-    modem3g.h
+    modem3g.h \
+    dialogsms.h
 
-FORMS    += mainwindow.ui
+FORMS    += mainwindow.ui \
+    dialogsms.ui
 
 DISTFILES +=
